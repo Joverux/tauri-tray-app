@@ -1,85 +1,149 @@
-# timeman — Tauri Tray App Boilerplate
+<!--
+  README for timeman: a tray-first Tauri + React template.
+  Keep this file focused, easy to scan, and actionable for new contributors.
+-->
 
-timeman is a minimal, opinionated tray-first desktop app built with Tauri (Rust)
-and a React (Vite) frontend. It demonstrates a compact, production-minded
-architecture for tray utilities: the app lives in the system tray by default,
-supports toggling the main window with a left-click, exposes an action menu on
-right-click, and includes an autostart integration.
+# timeman — Tray-first Tauri App Template
 
-This repository is a solid starting point for building utilities like clocks,
-timers, background workers, or any small tool where the tray is the primary
-interface.
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![build](https://img.shields.io/badge/build-windows%20%7C%20linux%20%7C%20macOS-lightgrey.svg)](#)
 
-Highlights
-- Tray-first UX: app starts hidden with a tray icon and a small, focused UI.
-- Left-click toggles show/hide (hides to tray using `window.hide()`).
-- Right-click opens a native context menu with actions (autostart, Show/Hide,
-  Quit).
-- Autostart integration using `tauri-plugin-autostart` with frontend sync via
-  events.
+timeman is a minimal, production-minded template for tray-first desktop apps
+built with Tauri (Rust) and a React (Vite) frontend. The app is designed to
+live primarily in the system tray: it starts hidden, supports left-click
+toggle of the main window, and exposes actions on right-click.
+
+Use this repository as a starting point for small utilities like clocks,
+timers, background helpers, or any tool where the tray is the primary UI.
+
+Key features
+
+- Tray-first UX: the app starts hidden and runs in the system tray.
+- Precise tray interactions: left-click strictly toggles show/hide; right-click
+  opens a native context menu.
+- Autostart support using `tauri-plugin-autostart` (menu checkbox + frontend
+  event sync).
 - Small, easy-to-extend Rust backend (`src-tauri/`) and React frontend (`src/`).
 
-Quick start (development)
-1. Install Rust (recommended toolchain: 1.88.0) and ensure MSVC build tools are
-   available on Windows.
-   - Optionally pin the toolchain locally with: `rustup override set 1.88.0`.
-2. Install frontend dependencies:
-   - `bun install` (recommended) or `npm install` / `pnpm install`.
-3. Run the dev environment (starts Vite and the native Tauri binary):
-   - `bun run tauri dev`
+Quick start — development
 
-Build and package
-- Build the native binary: `cd src-tauri && cargo +1.88.0 build --release`
-- Create OS installers using `tauri build` (follow Tauri docs for platform
-  specific signing and packaging requirements).
+Prerequisites
 
-Repository layout
-- `src/` — React (Vite) frontend. Contains example UI (autostart toggle) and
-  listens for backend events like `autostart-changed`.
-- `src-tauri/` — Rust backend. Key files:
-  - `src/` — Rust app code (entry points, tray builder, autostart glue).
-  - `src/tray.rs` — tray menu and click handling (left-click toggles, right
-    click opens menu). This file contains the UX logic you’ll likely extend.
-  - `src/autostart.rs` — wrapper around `tauri-plugin-autostart`.
-  - `tauri.conf.json` — Tauri config; app starts hidden by default.
-- `src-tauri/icons/` — packaged icons generated with
-  `npx @tauri-apps/cli icon src-tauri/icons/clock.svg`.
+- Rust (recommended toolchain: 1.88.0). Pin locally with:
+  ```bash
+  rustup override set 1.88.0
+  ```
+- On Windows: install Visual Studio Build Tools + Windows SDK ("Desktop
+  development with C++").
+- Node-compatible package manager (bun recommended) or npm/pnpm.
 
-UX & behavior notes
-- Left-click is intentionally implemented to strictly toggle show/hide. The
-  window is hidden using `window.hide()` so it is removed from the taskbar.
-- Right-click shows the native context menu. On some Linux desktops and macOS
-  the tray behavior differs slightly — the implementation includes small
-  fallbacks where necessary.
-- Clicks are debounced (200ms) to avoid accidental double toggles.
+Run locally
+
+1. Install frontend deps:
+
+```bash
+bun install
+# or: npm install
+```
+
+2. Start the development environment (runs Vite and the native Tauri app):
+
+```bash
+bun run tauri dev
+# or: npm run tauri dev
+```
+
+3. Interact with the tray:
+
+- Left-click the tray icon to toggle the main window (hide to tray or show).
+- Right-click the tray icon to open the action menu (Autostart, Show/Hide,
+  Quit).
+
+Build & package
+
+Build native binary (release):
+
+```bash
+cd src-tauri
+cargo +1.88.0 build --release
+```
+
+Create packaged installers using Tauri:
+
+```bash
+cd src-tauri
+cargo +1.88.0 build
+cd ..
+tauri build
+```
+
+See Tauri docs for platform-specific packaging/signing steps.
+
+Project layout
+
+- `src/` — React (Vite) frontend (UI, autostart toggle). See `src/App.tsx`.
+- `src-tauri/` — Rust backend and Tauri configuration:
+  - `src/tray.rs` — tray icon, menu, and click handling (where tray UX lives).
+  - `src/autostart.rs` — helper around `tauri-plugin-autostart`.
+  - `tauri.conf.json` — Tauri config (app starts hidden by default).
+  - `icons/` — bundled icons (generated by `npx @tauri-apps/cli icon`).
+
+Important implementation notes
+
+- Left-click toggling uses `window.hide()` when hiding so the app is removed
+  from the taskbar (tray-only). Showing calls `window.show()`,
+  `window.unminimize()`, and `window.set_focus()` to restore/activate the UI.
+- Right-click behavior relies on the OS showing the native menu. The code sets
+  `.show_menu_on_left_click(false)` to ensure left-click never opens the menu.
+- Clicks are debounced (200 ms) to prevent accidental double toggles.
+- Autostart changes emit `autostart-changed` events so the frontend stays in
+  sync with backend state.
+
+Testing & verification checklist
+
+1. App starts without showing the main window; tray icon is visible.
+2. Left-click the tray icon:
+   - Hidden -> window appears focused; toggle menu text becomes "Hide".
+   - Visible -> window hides to tray; toggle menu text becomes "Show".
+   - No context menu appears on left-click.
+3. Right-click the tray icon opens the context menu: Toggle Autostart (checkbox),
+   Show/Hide, Quit.
+4. Rapid clicks (within 200 ms) do not cause visible flicker.
 
 Extending the project
-- Add menu items in `src-tauri/src/tray.rs` and handle them with
-  `.on_menu_event(...)`.
-- Expose new backend functions with `#[tauri::command]` and register them in
+
+- Add menu entries in `src-tauri/src/tray.rs` using the `MenuBuilder` API and
+  handle actions with `.on_menu_event(...)`.
+- Expose backend commands with `#[tauri::command]` and register them in
   `src-tauri/src/lib.rs` using `generate_handler!`.
-- Use `AppHandle.emit("event-name", payload)` to notify the frontend of
-  state changes and listen in the UI using `@tauri-apps/api/event`.
+- Emit backend events to the frontend with `AppHandle.emit("event", payload)`
+  and listen in the UI with `@tauri-apps/api/event`.
+
+Cross-platform notes
+
+- Windows: primary target — tray menu and click handling are implemented for
+  native behavior.
+- Linux / macOS: system tray semantics vary across desktop environments. Some
+  platforms may treat right-click/control-click the same or ignore tooltips.
+  Test on each target OS to confirm expected UX.
 
 Contributing
-- File a PR for features or bug fixes. The `feat/tray-work` branch contains
-  a recent tray UX improvement: left-click toggle, right-click menu, debounce,
-  and tooltip updates.
 
-Troubleshooting
-- If the Rust build fails on Windows, ensure Visual Studio Build Tools and the
-  Windows SDK are installed (select "Desktop development with C++").
-- If tray icons or menus behave differently on your platform, test directly on
-  that OS — system tray behavior varies across environments.
+See `CONTRIBUTING.md` for development setup, branching patterns, and PR
+guidelines. Small, focused PRs with clear verification steps are preferred.
 
 License
-- This project is open-source. Add your preferred license file (`LICENSE`) to
-  the repo.
 
-Questions or help
-- If you'd like, I can:
-  1) Polish the README further with screenshots and code snippets.
-  2) Add a CI workflow to build on Windows/Linux/macOS.
-  3) Create release artifacts and a packaged installer example.
+This project is open-source under the MIT License — see `LICENSE`.
 
-Enjoy building with timeman!
+Acknowledgements
+
+- Built with Tauri and the `tauri-plugin-autostart` plugin.
+
+Want help polishing further?
+
+I can:
+1. Add screenshots and a short demo GIF to the README.
+2. Add GitHub Actions to run `cargo build` on push/PR across platforms.
+3. Create a pre-packaged release with installers.
+
+Pick one of the above if you'd like me to continue.
