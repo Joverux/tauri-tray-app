@@ -4,13 +4,15 @@ use std::path::PathBuf;
 use tauri::image::Image as TauriImage;
 use tauri::Manager;
 use tauri::Emitter;
+use std::sync::{Arc, Mutex};
+use std::time::{Instant, Duration};
 
 // Build the system tray and register event handlers.
 //
 // Behavior implemented:
 // - Single left-click on the tray icon toggles the main window:
-//     * If the main window is hidden or minimized -> unminimize, show, focus
-//     * If the main window is visible -> minimize it
+//     * If the main window is hidden -> show, unminimize, focus
+//     * If the main window is visible -> hide it (hide to tray)
 // - The tray menu contains a Toggle Autostart item and Quit.
 pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     // Menu items (constructed with the v2 MenuBuilder API)
@@ -53,47 +55,73 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         TauriImage::from_path(PathBuf::from("icons/icon.png")).ok()
     };
 
+    // Debounce state for click handling
+    let last_click = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(1)));
+    let debounce_ms = Duration::from_millis(200);
+
     let tray_builder = if let Some(icon) = maybe_icon {
-        TrayIconBuilder::new().icon(icon)
+        TrayIconBuilder::new().icon(icon).show_menu_on_left_click(false)
     } else {
-        TrayIconBuilder::new()
+        TrayIconBuilder::new().show_menu_on_left_click(false)
     };
 
     tray_builder
         .menu(&menu)
         // Handle icon interactions (clicks). We use the Click event and
-        // implement toggle semantics: show/focus when hidden, minimize when visible.
+        // implement toggle semantics: show/focus when hidden, hide when visible.
         .on_tray_icon_event({
             let show_hide = show_hide.clone();
+            let last_click = last_click.clone();
             move |tray, event| match event {
                 TrayIconEvent::Click { button, button_state, .. } => {
-                    if button == MouseButton::Left && button_state == MouseButtonState::Up {
+                    use tauri::api::tray::MouseButton as _MB;
+                    // Only handle mouse-up to match standard expectations.
+                    if button_state != MouseButtonState::Up {
+                        return;
+                    }
+
+                    // Debounce rapid clicks
+                    {
+                        let mut last = last_click.lock().unwrap();
+                        if last.elapsed() < debounce_ms {
+                            return;
+                        }
+                        *last = Instant::now();
+                    }
+
+                    if button == MouseButton::Left {
                         let app = tray.app_handle();
                         // Try to get the main window by the id "main" as declared in
-                        // `tauri.conf.json`. If present, toggle its visibility/minimized state.
+                        // `tauri.conf.json`. If present, toggle its visibility/hide state.
                         if let Some(window) = app.get_webview_window("main") {
                             // is_visible returns a Result<bool>
                             if let Ok(visible) = window.is_visible() {
                                 if visible {
-                                    // If visible, minimize the window (keeps it in taskbar).
-                                    let _ = window.minimize();
+                                    // If visible, hide the window (remove from taskbar).
+                                    let _ = window.hide();
                                     let _ = show_hide.set_text("Show");
+                                    let _ = tray.set_tooltip(Some("timeman — hidden".into()));
                                 } else {
-                                    // If not visible, unminimize/show and focus.
-                                    let _ = window.unminimize();
+                                    // If not visible, show/unminimize and focus.
                                     let _ = window.show();
+                                    let _ = window.unminimize();
                                     let _ = window.set_focus();
                                     let _ = show_hide.set_text("Hide");
+                                    let _ = tray.set_tooltip(Some("timeman — visible".into()));
                                 }
                             } else {
                                 // If we cannot query visibility, fall back to showing the
                                 // window to be safe.
-                                let _ = window.unminimize();
                                 let _ = window.show();
+                                let _ = window.unminimize();
                                 let _ = window.set_focus();
                                 let _ = show_hide.set_text("Hide");
+                                let _ = tray.set_tooltip(Some("timeman — visible".into()));
                             }
                         }
+                    } else if button == MouseButton::Right {
+                        // Let the system open the context menu on right click. Do
+                        // not open it manually here to preserve native behavior.
                     }
                 }
                 _ => {}
