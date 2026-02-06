@@ -59,11 +59,8 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let last_click = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(1)));
     let debounce_ms = Duration::from_millis(200);
 
-    let tray_builder = if let Some(icon) = maybe_icon {
-        TrayIconBuilder::new().icon(icon).show_menu_on_left_click(false)
-    } else {
-        TrayIconBuilder::new().show_menu_on_left_click(false)
-    };
+    // We'll build the tray below; no intermediate TrayIconBuilder variable is
+    // needed here to avoid type inference issues for the runtime generic.
 
     
 
