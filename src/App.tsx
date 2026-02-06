@@ -1,15 +1,29 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/tauri";
 import "./App.css";
 
 function App() {
   const [greetMsg, setGreetMsg] = useState("");
   const [name, setName] = useState("");
+  const [autostart, setAutostart] = useState<boolean | null>(null);
 
   async function greet() {
     // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
     setGreetMsg(await invoke("greet", { name }));
+  }
+
+  useEffect(() => {
+    // query current autostart value from backend
+    invoke<boolean>("is_autostart_enabled")
+      .then((v) => setAutostart(v))
+      .catch(() => setAutostart(null));
+  }, []);
+
+  async function toggleAutostart() {
+    if (autostart === null) return;
+    await invoke("set_autostart_enabled", { enabled: !autostart });
+    setAutostart(!autostart);
   }
 
   return (
@@ -44,6 +58,16 @@ function App() {
         <button type="submit">Greet</button>
       </form>
       <p>{greetMsg}</p>
+
+      <section style={{ marginTop: 20 }}>
+        <h2>Autostart</h2>
+        <p>
+          Auto startup is: {autostart === null ? "unknown" : autostart ? "enabled" : "disabled"}
+        </p>
+        <button onClick={toggleAutostart} disabled={autostart === null}>
+          {autostart ? "Disable Autostart" : "Enable Autostart"}
+        </button>
+      </section>
     </main>
   );
 }
