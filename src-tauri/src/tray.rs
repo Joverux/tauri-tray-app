@@ -65,227 +65,200 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         TrayIconBuilder::new().show_menu_on_left_click(false)
     };
 
-    tray_builder
-        .menu(&menu)
-        // Handle icon interactions (clicks). We use the Click event and
-        // implement toggle semantics: show/focus when hidden, hide when visible.
-        .on_tray_icon_event({
-            let show_hide = show_hide.clone();
-            let last_click = last_click.clone();
-            move |tray, event| match event {
-                TrayIconEvent::Click { button, button_state, .. } => {
-                    // Only handle mouse-up to match standard expectations.
-                    if button_state != MouseButtonState::Up {
-                        return;
-                    }
+    
 
-                    // Debounce rapid clicks
-                    {
-                        let mut last = last_click.lock().unwrap();
-                        if last.elapsed() < debounce_ms {
+    // Build the tray once and capture the returned `TrayIcon` so we can call
+    // methods like `set_tooltip` on it later. The `TrayIconBuilder` is
+    // consumed by `menu`/`on_tray_icon_event`, so we construct the builder anew
+    // and immediately capture the built value into `tray`.
+    let tray = if let Some(icon) = maybe_icon {
+        TrayIconBuilder::new()
+            .icon(icon)
+            .show_menu_on_left_click(false)
+            .menu(&menu)
+            .on_tray_icon_event({
+                let show_hide = show_hide.clone();
+                let last_click = last_click.clone();
+                move |tray, event| match event {
+                    TrayIconEvent::Click { button, button_state, .. } => {
+                        // Only handle mouse-up to match standard expectations.
+                        if button_state != MouseButtonState::Up {
                             return;
                         }
-                        *last = Instant::now();
-                    }
 
-                    if button == MouseButton::Left {
-                        let app = tray.app_handle();
-                        // Try to get the main window by the id "main" as declared in
-                        // `tauri.conf.json`. If present, toggle its visibility/hide state.
-                        if let Some(window) = app.get_webview_window("main") {
-                            // is_visible returns a Result<bool>
-                            if let Ok(visible) = window.is_visible() {
-                                if visible {
-                                    // If visible, hide the window (remove from taskbar).
-                                    let _ = window.hide();
-                                    let _ = show_hide.set_text("Show");
-                                    let _ = tray.set_tooltip(Some(String::from("timeman — hidden")));
+                        // Debounce rapid clicks
+                        {
+                            let mut last = last_click.lock().unwrap();
+                            if last.elapsed() < debounce_ms {
+                                return;
+                            }
+                            *last = Instant::now();
+                        }
+
+                        if button == MouseButton::Left {
+                            let app = tray.app_handle();
+                            if let Some(window) = app.get_webview_window("main") {
+                                if let Ok(visible) = window.is_visible() {
+                                    if visible {
+                                        let _ = window.hide();
+                                        let _ = show_hide.set_text("Show");
+                                        let _ = tray.set_tooltip(Some(String::from("timeman — hidden")));
+                                    } else {
+                                        let _ = window.show();
+                                        let _ = window.unminimize();
+                                        let _ = window.set_focus();
+                                        let _ = show_hide.set_text("Hide");
+                                        let _ = tray.set_tooltip(Some(String::from("timeman — visible")));
+                                    }
                                 } else {
-                                    // If not visible, show/unminimize and focus.
                                     let _ = window.show();
                                     let _ = window.unminimize();
                                     let _ = window.set_focus();
                                     let _ = show_hide.set_text("Hide");
                                     let _ = tray.set_tooltip(Some(String::from("timeman — visible")));
                                 }
-                            } else {
-                                // If we cannot query visibility, fall back to showing the
-                                // window to be safe.
-                                let _ = window.show();
-                                let _ = window.unminimize();
-                                let _ = window.set_focus();
-                                let _ = show_hide.set_text("Hide");
-                                let _ = tray.set_tooltip(Some(String::from("timeman — visible")));
                             }
+                        } else if button == MouseButton::Right {
+                            // Let the system open the context menu on right click.
                         }
-                    } else if button == MouseButton::Right {
-                        // Let the system open the context menu on right click. Do
-                        // not open it manually here to preserve native behavior.
-                    }
-                }
-                _ => {}
-            }
-        })
-        // Menu item handler
-        .on_menu_event({
-            // move a clone of the CheckMenuItem and the Show/Hide text item
-            // into the closure so we can update them from Rust.
-            let toggle = toggle.clone();
-            let show_hide = show_hide.clone();
-            move |app, event| {
-                match event.id().as_ref() {
-                    "toggle-autostart" => {
-                        let app_handle = app.clone();
-                        let toggle_clone = toggle.clone();
-                        tauri::async_runtime::spawn(async move {
-                            if let Ok(enabled) = crate::autostart::is_enabled(&app_handle) {
-                                let _ = crate::autostart::set_enabled(&app_handle, !enabled);
-                                let _ = toggle_clone.set_checked(!enabled);
-                                // Notify frontend listeners that autostart changed.
-                                let _ = app_handle.emit("autostart-changed", !enabled);
-                            }
-                        });
-                    }
-                    "toggle-window" => {
-                        // Toggle the main window visibility from the menu item
-                        let app_handle = app.clone();
-                        let show_hide_clone = show_hide.clone();
-                        tauri::async_runtime::spawn(async move {
-                            if let Some(window) = app_handle.get_webview_window("main") {
-                                if let Ok(visible) = window.is_visible() {
-                                    if visible {
-                                        let _ = window.minimize();
-                                        let _ = show_hide_clone.set_text("Show");
-                                    } else {
-                                        let _ = window.unminimize();
-                                        let _ = window.show();
-                                        let _ = window.set_focus();
-                                        let _ = show_hide_clone.set_text("Hide");
-                                    }
-                                }
-                            }
-                        });
-                    }
-                    "quit" => {
-                        app.exit(0);
                     }
                     _ => {}
                 }
-            }
-        })
-        .build(app)?;
-
-    // The builder returns a `TrayIcon` from `build`. However the builder
-    // call above was chained and returned the built tray. To update the
-    // tooltip here we need the built `TrayIcon` value. Rebuild the chain and
-    // capture the result into `tray`.
-    let tray = tray_builder
-        .menu(&menu)
-        .on_tray_icon_event({
-            let show_hide = show_hide.clone();
-            let last_click = last_click.clone();
-            move |tray, event| match event {
-                TrayIconEvent::Click { button, button_state, .. } => {
-                    // Only handle mouse-up to match standard expectations.
-                    if button_state != MouseButtonState::Up {
-                        return;
+            })
+            .on_menu_event({
+                let toggle = toggle.clone();
+                let show_hide = show_hide.clone();
+                move |app, event| {
+                    match event.id().as_ref() {
+                        "toggle-autostart" => {
+                            let app_handle = app.clone();
+                            let toggle_clone = toggle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                if let Ok(enabled) = crate::autostart::is_enabled(&app_handle) {
+                                    let _ = crate::autostart::set_enabled(&app_handle, !enabled);
+                                    let _ = toggle_clone.set_checked(!enabled);
+                                    let _ = app_handle.emit("autostart-changed", !enabled);
+                                }
+                            });
+                        }
+                        "toggle-window" => {
+                            let app_handle = app.clone();
+                            let show_hide_clone = show_hide.clone();
+                            tauri::async_runtime::spawn(async move {
+                                if let Some(window) = app_handle.get_webview_window("main") {
+                                    if let Ok(visible) = window.is_visible() {
+                                        if visible {
+                                            let _ = window.minimize();
+                                            let _ = show_hide_clone.set_text("Show");
+                                        } else {
+                                            let _ = window.unminimize();
+                                            let _ = window.show();
+                                            let _ = window.set_focus();
+                                            let _ = show_hide_clone.set_text("Hide");
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        _ => {}
                     }
-
-                    // Debounce rapid clicks
-                    {
-                        let mut last = last_click.lock().unwrap();
-                        if last.elapsed() < debounce_ms {
+                }
+            })
+            .build(app)?
+    } else {
+        TrayIconBuilder::new()
+            .show_menu_on_left_click(false)
+            .menu(&menu)
+            .on_tray_icon_event({
+                let show_hide = show_hide.clone();
+                let last_click = last_click.clone();
+                move |tray, event| match event {
+                    TrayIconEvent::Click { button, button_state, .. } => {
+                        if button_state != MouseButtonState::Up {
                             return;
                         }
-                        *last = Instant::now();
-                    }
-
-                    if button == MouseButton::Left {
-                        let app = tray.app_handle();
-                        // Try to get the main window by the id "main" as declared in
-                        // `tauri.conf.json`. If present, toggle its visibility/hide state.
-                        if let Some(window) = app.get_webview_window("main") {
-                            // is_visible returns a Result<bool>
-                            if let Ok(visible) = window.is_visible() {
-                                if visible {
-                                    // If visible, hide the window (remove from taskbar).
-                                    let _ = window.hide();
-                                    let _ = show_hide.set_text("Show");
-                                    let _ = tray.set_tooltip(Some(String::from("timeman — hidden")));
+                        {
+                            let mut last = last_click.lock().unwrap();
+                            if last.elapsed() < debounce_ms {
+                                return;
+                            }
+                            *last = Instant::now();
+                        }
+                        if button == MouseButton::Left {
+                            let app = tray.app_handle();
+                            if let Some(window) = app.get_webview_window("main") {
+                                if let Ok(visible) = window.is_visible() {
+                                    if visible {
+                                        let _ = window.hide();
+                                        let _ = show_hide.set_text("Show");
+                                        let _ = tray.set_tooltip(Some(String::from("timeman — hidden")));
+                                    } else {
+                                        let _ = window.show();
+                                        let _ = window.unminimize();
+                                        let _ = window.set_focus();
+                                        let _ = show_hide.set_text("Hide");
+                                        let _ = tray.set_tooltip(Some(String::from("timeman — visible")));
+                                    }
                                 } else {
-                                    // If not visible, show/unminimize and focus.
                                     let _ = window.show();
                                     let _ = window.unminimize();
                                     let _ = window.set_focus();
                                     let _ = show_hide.set_text("Hide");
                                     let _ = tray.set_tooltip(Some(String::from("timeman — visible")));
                                 }
-                            } else {
-                                // If we cannot query visibility, fall back to showing the
-                                // window to be safe.
-                                let _ = window.show();
-                                let _ = window.unminimize();
-                                let _ = window.set_focus();
-                                let _ = show_hide.set_text("Hide");
-                                let _ = tray.set_tooltip(Some(String::from("timeman — visible")));
                             }
                         }
-                    } else if button == MouseButton::Right {
-                        // Let the system open the context menu on right click. Do
-                        // not open it manually here to preserve native behavior.
-                    }
-                }
-                _ => {}
-            }
-        })
-        // Menu item handler
-        .on_menu_event({
-            // move a clone of the CheckMenuItem and the Show/Hide text item
-            // into the closure so we can update them from Rust.
-            let toggle = toggle.clone();
-            let show_hide = show_hide.clone();
-            move |app, event| {
-                match event.id().as_ref() {
-                    "toggle-autostart" => {
-                        let app_handle = app.clone();
-                        let toggle_clone = toggle.clone();
-                        tauri::async_runtime::spawn(async move {
-                            if let Ok(enabled) = crate::autostart::is_enabled(&app_handle) {
-                                let _ = crate::autostart::set_enabled(&app_handle, !enabled);
-                                let _ = toggle_clone.set_checked(!enabled);
-                                // Notify frontend listeners that autostart changed.
-                                let _ = app_handle.emit("autostart-changed", !enabled);
-                            }
-                        });
-                    }
-                    "toggle-window" => {
-                        // Toggle the main window visibility from the menu item
-                        let app_handle = app.clone();
-                        let show_hide_clone = show_hide.clone();
-                        tauri::async_runtime::spawn(async move {
-                            if let Some(window) = app_handle.get_webview_window("main") {
-                                if let Ok(visible) = window.is_visible() {
-                                    if visible {
-                                        let _ = window.minimize();
-                                        let _ = show_hide_clone.set_text("Show");
-                                    } else {
-                                        let _ = window.unminimize();
-                                        let _ = window.show();
-                                        let _ = window.set_focus();
-                                        let _ = show_hide_clone.set_text("Hide");
-                                    }
-                                }
-                            }
-                        });
-                    }
-                    "quit" => {
-                        app.exit(0);
                     }
                     _ => {}
                 }
-            }
-        })
-        .build(app)?;
+            })
+            .on_menu_event({
+                let toggle = toggle.clone();
+                let show_hide = show_hide.clone();
+                move |app, event| {
+                    match event.id().as_ref() {
+                        "toggle-autostart" => {
+                            let app_handle = app.clone();
+                            let toggle_clone = toggle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                if let Ok(enabled) = crate::autostart::is_enabled(&app_handle) {
+                                    let _ = crate::autostart::set_enabled(&app_handle, !enabled);
+                                    let _ = toggle_clone.set_checked(!enabled);
+                                    let _ = app_handle.emit("autostart-changed", !enabled);
+                                }
+                            });
+                        }
+                        "toggle-window" => {
+                            let app_handle = app.clone();
+                            let show_hide_clone = show_hide.clone();
+                            tauri::async_runtime::spawn(async move {
+                                if let Some(window) = app_handle.get_webview_window("main") {
+                                    if let Ok(visible) = window.is_visible() {
+                                        if visible {
+                                            let _ = window.minimize();
+                                            let _ = show_hide_clone.set_text("Show");
+                                        } else {
+                                            let _ = window.unminimize();
+                                            let _ = window.show();
+                                            let _ = window.set_focus();
+                                            let _ = show_hide_clone.set_text("Hide");
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        _ => {}
+                    }
+                }
+            })
+            .build(app)?
+    };
 
     // Set an initial tooltip so hovering the tray icon shows helpful text on
     // platforms that support it. Use an explicit generic to avoid type
