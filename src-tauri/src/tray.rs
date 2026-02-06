@@ -175,5 +175,22 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         })
         .build(app)?;
 
+    // Set an initial tooltip so hovering the tray icon shows helpful text on
+    // platforms that support it. Use an explicit generic to avoid type
+    // inference issues across dependency crates.
+    if let Some(window) = app.get_webview_window("main") {
+        if let Ok(visible) = window.is_visible() {
+            let _ = tray.set_tooltip::<String>(Some(String::from(if visible {
+                "timeman — visible"
+            } else {
+                "timeman — hidden"
+            })));
+        } else {
+            let _ = tray.set_tooltip::<String>(Some(String::from("timeman")));
+        }
+    } else {
+        let _ = tray.set_tooltip::<String>(Some(String::from("timeman")));
+    }
+
     Ok(())
 }
