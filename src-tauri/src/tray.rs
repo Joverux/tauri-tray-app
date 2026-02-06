@@ -1,7 +1,7 @@
 use tauri::menu::{MenuBuilder, MenuItemBuilder, CheckMenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState};
 use std::path::PathBuf;
-use tauri::Icon;
+use tauri::image::Image as TauriImage;
 use tauri::Manager;
 use tauri::Emitter;
 
@@ -44,11 +44,19 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     // available; fall back to a PNG if not. The icon files live in
     // `src-tauri/icons` and are included in the Tauri bundle by default.
     let icon_path = PathBuf::from("icons/icon.ico");
-    let tray_builder = if icon_path.exists() {
-        TrayIconBuilder::new().icon(Icon::File(icon_path))
+    // Try to load an Image from the packaged icons. If loading fails, fall
+    // back to building the tray without an explicit icon (some platforms
+    // will still show the app icon from resources).
+    let maybe_icon = if icon_path.exists() {
+        TauriImage::from_path(icon_path.clone()).ok()
     } else {
-        // fallback to icon.png
-        TrayIconBuilder::new().icon(Icon::File(PathBuf::from("icons/icon.png")))
+        TauriImage::from_path(PathBuf::from("icons/icon.png")).ok()
+    };
+
+    let tray_builder = if let Some(icon) = maybe_icon {
+        TrayIconBuilder::new().icon(icon)
+    } else {
+        TrayIconBuilder::new()
     };
 
     tray_builder
