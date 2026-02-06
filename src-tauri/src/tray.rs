@@ -1,34 +1,131 @@
-use tauri::{CustomMenuItem, SystemTray, SystemTrayEvent, SystemTrayMenu, SystemTrayMenuItem, AppHandle};
+use tauri::menu::{MenuBuilder, MenuItemBuilder, CheckMenuItemBuilder};
+use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState};
+use tauri::Manager;
+use tauri::Emitter;
 
-pub fn build_system_tray() -> SystemTray {
-    let toggle_autostart = CustomMenuItem::new("toggle-autostart".to_string(), "Toggle Autostart");
-    let quit = CustomMenuItem::new("quit".to_string(), "Quit");
+// Build the system tray and register event handlers.
+//
+// Behavior implemented:
+// - Single left-click on the tray icon toggles the main window:
+//     * If the main window is hidden or minimized -> unminimize, show, focus
+//     * If the main window is visible -> minimize it
+// - The tray menu contains a Toggle Autostart item and Quit.
+pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    // Menu items (constructed with the v2 MenuBuilder API)
+    // Create a checkable menu item so its checked state represents the
+    // autostart enabled state.
+    let toggle = CheckMenuItemBuilder::with_id("toggle-autostart", "Toggle Autostart").checked(false).build(app)?;
+    let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
-    let tray_menu = SystemTrayMenu::new()
-        .add_item(toggle_autostart)
-        .add_native_item(SystemTrayMenuItem::Separator)
-        .add_item(quit);
+    // A menu item that toggles the main window's visibility. We'll set its
+    // initial text to "Show" or "Hide" based on the current window state.
+    let show_hide = MenuItemBuilder::with_id("toggle-window", "Show").build(app)?;
 
-    SystemTray::new().with_menu(tray_menu)
-}
-
-pub fn on_tray_event(app: &AppHandle, event: SystemTrayEvent) {
-    match event {
-        SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
-            "toggle-autostart" => {
-                // call Rust autostart handler to toggle
-                let app = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Ok(enabled) = crate::autostart::is_enabled(&app) {
-                        let _ = crate::autostart::set_enabled(&app, !enabled);
-                    }
-                });
-            }
-            "quit" => {
-                std::process::exit(0);
-            }
-            _ => {}
-        },
-        _ => {}
+    // If the main window exists, set initial menu text to match its state.
+    if let Some(window) = app.get_webview_window("main") {
+        if let Ok(visible) = window.is_visible() {
+            let _ = show_hide.set_text(if visible { "Hide" } else { "Show" });
+        }
     }
+
+    let menu = MenuBuilder::new(app).items(&[&toggle, &show_hide, &quit]).build()?;
+
+    // Set initial checked state from the autostart plugin if available and
+    // also emit an event so the frontend can synchronize on startup.
+    if let Ok(enabled) = crate::autostart::is_enabled(app) {
+        let _ = toggle.set_checked(enabled);
+        // Emit an event so the frontend can update its UI without polling.
+        let _ = app.emit("autostart-changed", enabled);
+    }
+
+    TrayIconBuilder::new()
+        .menu(&menu)
+        // Handle icon interactions (clicks). We use the Click event and
+        // implement toggle semantics: show/focus when hidden, minimize when visible.
+        .on_tray_icon_event({
+            let show_hide = show_hide.clone();
+            move |tray, event| match event {
+                TrayIconEvent::Click { button, button_state, .. } => {
+                    if button == MouseButton::Left && button_state == MouseButtonState::Up {
+                        let app = tray.app_handle();
+                        // Try to get the main window by the id "main" as declared in
+                        // `tauri.conf.json`. If present, toggle its visibility/minimized state.
+                        if let Some(window) = app.get_webview_window("main") {
+                            // is_visible returns a Result<bool>
+                            if let Ok(visible) = window.is_visible() {
+                                if visible {
+                                    // If visible, minimize the window (keeps it in taskbar).
+                                    let _ = window.minimize();
+                                    let _ = show_hide.set_text("Show");
+                                } else {
+                                    // If not visible, unminimize/show and focus.
+                                    let _ = window.unminimize();
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                    let _ = show_hide.set_text("Hide");
+                                }
+                            } else {
+                                // If we cannot query visibility, fall back to showing the
+                                // window to be safe.
+                                let _ = window.unminimize();
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                                let _ = show_hide.set_text("Hide");
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        })
+        // Menu item handler
+        .on_menu_event({
+            // move a clone of the CheckMenuItem and the Show/Hide text item
+            // into the closure so we can update them from Rust.
+            let toggle = toggle.clone();
+            let show_hide = show_hide.clone();
+            move |app, event| {
+                match event.id().as_ref() {
+                    "toggle-autostart" => {
+                        let app_handle = app.clone();
+                        let toggle_clone = toggle.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Ok(enabled) = crate::autostart::is_enabled(&app_handle) {
+                                let _ = crate::autostart::set_enabled(&app_handle, !enabled);
+                                let _ = toggle_clone.set_checked(!enabled);
+                                // Notify frontend listeners that autostart changed.
+                                let _ = app_handle.emit("autostart-changed", !enabled);
+                            }
+                        });
+                    }
+                    "toggle-window" => {
+                        // Toggle the main window visibility from the menu item
+                        let app_handle = app.clone();
+                        let show_hide_clone = show_hide.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Some(window) = app_handle.get_webview_window("main") {
+                                if let Ok(visible) = window.is_visible() {
+                                    if visible {
+                                        let _ = window.minimize();
+                                        let _ = show_hide_clone.set_text("Show");
+                                    } else {
+                                        let _ = window.unminimize();
+                                        let _ = window.show();
+                                        let _ = window.set_focus();
+                                        let _ = show_hide_clone.set_text("Hide");
+                                    }
+                                }
+                            }
+                        });
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .build(app)?;
+
+    Ok(())
 }

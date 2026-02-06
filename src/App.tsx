@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
 function App() {
@@ -18,6 +18,29 @@ function App() {
     invoke<boolean>("is_autostart_enabled")
       .then((v) => setAutostart(v))
       .catch(() => setAutostart(null));
+
+    // subscribe to autostart change events emitted from Rust so the UI stays
+    // in sync if the user toggles autostart via the tray menu. We listen for
+    // `autostart-changed` events and update local state. If the event system
+    // isn't used, this listener is effectively a no-op.
+    let unlisten: (() => Promise<void>) | null = null;
+    // Use dynamic import so bundlers don't include the event module for
+    // non-Tauri builds. If the import fails (not running inside Tauri), we
+    // silently ignore it.
+    import("@tauri-apps/api/event")
+      .then((event) => {
+        const handler = (e: any) => setAutostart(Boolean(e.payload));
+        return event.listen("autostart-changed", handler).then((fn: any) => {
+          unlisten = fn;
+        });
+      })
+      .catch(() => {
+        /* ignore - running outside Tauri or event module missing */
+      });
+
+    return () => {
+      if (unlisten) unlisten();
+    };
   }, []);
 
   async function toggleAutostart() {
