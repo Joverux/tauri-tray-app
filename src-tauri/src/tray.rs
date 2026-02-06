@@ -1,5 +1,7 @@
 use tauri::menu::{MenuBuilder, MenuItemBuilder, CheckMenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState};
+use std::path::PathBuf;
+use tauri::Icon;
 use tauri::Manager;
 use tauri::Emitter;
 
@@ -38,7 +40,18 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         let _ = app.emit("autostart-changed", enabled);
     }
 
-    TrayIconBuilder::new()
+    // Use the packaged icon for the tray. Prefer the Windows .ico when
+    // available; fall back to a PNG if not. The icon files live in
+    // `src-tauri/icons` and are included in the Tauri bundle by default.
+    let icon_path = PathBuf::from("icons/icon.ico");
+    let tray_builder = if icon_path.exists() {
+        TrayIconBuilder::new().icon(Icon::File(icon_path))
+    } else {
+        // fallback to icon.png
+        TrayIconBuilder::new().icon(Icon::File(PathBuf::from("icons/icon.png")))
+    };
+
+    tray_builder
         .menu(&menu)
         // Handle icon interactions (clicks). We use the Click event and
         // implement toggle semantics: show/focus when hidden, minimize when visible.
