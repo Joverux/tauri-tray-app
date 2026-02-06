@@ -74,7 +74,6 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             let last_click = last_click.clone();
             move |tray, event| match event {
                 TrayIconEvent::Click { button, button_state, .. } => {
-                    use tauri::api::tray::MouseButton as _MB;
                     // Only handle mouse-up to match standard expectations.
                     if button_state != MouseButtonState::Up {
                         return;
@@ -100,14 +99,14 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                                     // If visible, hide the window (remove from taskbar).
                                     let _ = window.hide();
                                     let _ = show_hide.set_text("Show");
-                                    let _ = tray.set_tooltip(Some("timeman — hidden".into()));
+                                    let _ = tray.set_tooltip(Some(String::from("timeman — hidden")));
                                 } else {
                                     // If not visible, show/unminimize and focus.
                                     let _ = window.show();
                                     let _ = window.unminimize();
                                     let _ = window.set_focus();
                                     let _ = show_hide.set_text("Hide");
-                                    let _ = tray.set_tooltip(Some("timeman — visible".into()));
+                                    let _ = tray.set_tooltip(Some(String::from("timeman — visible")));
                                 }
                             } else {
                                 // If we cannot query visibility, fall back to showing the
@@ -116,7 +115,7 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                                 let _ = window.unminimize();
                                 let _ = window.set_focus();
                                 let _ = show_hide.set_text("Hide");
-                                let _ = tray.set_tooltip(Some("timeman — visible".into()));
+                                let _ = tray.set_tooltip(Some(String::from("timeman — visible")));
                             }
                         }
                     } else if button == MouseButton::Right {
